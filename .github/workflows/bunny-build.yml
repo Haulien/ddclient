@@ -1,0 +1,57 @@
+name: Build Bunny ddclient
+on:
+  push:
+    branches: [bunny-protocol]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake make perl curl ca-certificates libjson-pp-perl libhttp-daemon-perl libhttp-daemon-ssl-perl libplack-perl libtest-mockmodule-perl libtest-tcp-perl libtest-warnings-perl liburi-perl libwww-perl net-tools
+      - name: Configure and build
+        run: |
+          ./autogen
+          ./configure --prefix=/usr/local/bunny-ddclient --sysconfdir=/usr/local/etc --with-confdir=/usr/local/etc/bunny-ddclient --localstatedir=/var --runstatedir=/var/run
+          make
+          perl -c ddclient
+      - name: Run Bunny provider tests
+        run: make check TESTS=t/protocol_bunny.pl VERBOSE=1
+      - name: Run full test suite
+        run: make check VERBOSE=1
+      - name: Package OPNsense-targeted Perl script
+        run: |
+          rm ddclient
+          make ddclient PERL=/usr/local/bin/perl CURL=/usr/local/bin/curl
+          perl -c ddclient
+          mkdir -p package
+          cp ddclient ddclient.conf COPYING COPYRIGHT package/
+          chmod 755 package/ddclient
+          git rev-parse HEAD > package/SOURCE_COMMIT.txt
+          printf '%s\n' 'Custom ddclient build with Bunny DNS support.' 'Linux build and test run; not tested on FreeBSD or OPNsense.' 'Runtime paths: /usr/local/bin/perl and /usr/local/bin/curl.' 'Requires Perl runtime modules, including JSON::PP for Bunny, and CA certificates.' 'Default configuration: /usr/local/etc/bunny-ddclient/ddclient.conf.' 'ddclient.conf is an upstream sample, not a configured account.' 'This archive is not an OPNsense pkg and does not add GUI provider support.' 'Install alongside packaged ddclient; do not overwrite system files blindly.' > package/BUILD-NOTES.txt
+          tar -C package -czf ddclient-bunny-opnsense-script.tar.gz .
+          sha256sum ddclient-bunny-opnsense-script.tar.gz > ddclient-bunny-opnsense-script.tar.gz.sha256
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ddclient-bunny-opnsense-script
+          path: |
+            ddclient-bunny-opnsense-script.tar.gz
+            ddclient-bunny-opnsense-script.tar.gz.sha256
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ddclient-test-logs
+          if-no-files-found: ignore
+          path: |
+            config.log
+            test-suite.log
+            t/*.log
+            t/*.trs
